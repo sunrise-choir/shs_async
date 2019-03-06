@@ -1,0 +1,19 @@
+[package]
+name = "shs_async"
+version = "0.1.0"
+authors = ["sean billig <sean.billig@gmail.com>"]
+edition = "2018"
+license = "AGPL-3.0"
+description = "Secret-handshake protocol (async)"
+repository = "https://github.com/sbillig/shs_async"
+documentation = "https://docs.rs/shs_async/"
+readme = "README.md"
+keywords = ["secret-handshake", "handshake", "ssb", "scuttlebutt", "async"]
+
+[dependencies]
+futures-preview = "0.3.0-alpha.13"
+shs_core = "0.2"
+
+[dev-dependencies]
+hex = "0.3"
+pseudo-async-io = "0.1"
