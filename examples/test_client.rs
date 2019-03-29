@@ -3,9 +3,12 @@
 use std::env;
 use std::io::{stdin, stdout, Write};
 use futures::executor::block_on;
+use futures::io::AllowStdIo;
 use shs_async::*;
 
-extern crate pseudo_async_io;
+extern crate readwrite;
+use readwrite::ReadWrite;
+
 extern crate hex;
 use hex::FromHex;
 
@@ -23,8 +26,8 @@ fn main() -> Result<(), HandshakeError> {
 
     let (pk, sk) = client::generate_longterm_keypair();
 
-    let stream = pseudo_async_io::wrap_pair(stdin(), stdout());
-    let mut o = block_on(client(stream, net_id, pk, sk, server_pk))?;
+    let mut stream = AllowStdIo::new(ReadWrite::new(stdin(), stdout()));
+    let mut o = block_on(client(&mut stream, net_id, pk, sk, server_pk))?;
 
     let mut v = o.c2s_key.as_slice().to_vec();
     v.extend_from_slice(o.c2s_noncegen.next().as_slice());

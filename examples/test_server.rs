@@ -3,9 +3,12 @@
 use std::env;
 use std::io::{stdin, stdout, Write};
 use futures::executor::block_on;
+use futures::io::AllowStdIo;
 use shs_async::*;
 
-extern crate pseudo_async_io;
+extern crate readwrite;
+use readwrite::ReadWrite;
+
 extern crate hex;
 use hex::FromHex;
 
@@ -22,8 +25,8 @@ fn main() -> Result<(), HandshakeError> {
     let sk = ServerSecretKey::from_slice(&Vec::from_hex(&args[2]).unwrap()).unwrap();
     let pk = ServerPublicKey::from_slice(&Vec::from_hex(&args[3]).unwrap()).unwrap();
 
-    let stream = pseudo_async_io::wrap_pair(stdin(), stdout());
-    let mut o = block_on(server(stream, net_id, pk, sk))?;
+    let mut stream = AllowStdIo::new(ReadWrite::new(stdin(), stdout()));
+    let mut o = block_on(server(&mut stream, net_id, pk, sk))?;
 
     let mut v = o.s2c_key.as_slice().to_vec();
     v.extend_from_slice(o.s2c_noncegen.next().as_slice());
