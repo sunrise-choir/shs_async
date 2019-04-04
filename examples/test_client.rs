@@ -12,6 +12,9 @@ use readwrite::ReadWrite;
 extern crate hex;
 use hex::FromHex;
 
+extern crate ssb_crypto;
+use ssb_crypto::{generate_longterm_keypair, NetworkKey, PublicKey};
+
 // For use with https://github.com/AljoschaMeyer/shs1-testsuite
 fn main() -> Result<(), HandshakeError> {
 
@@ -21,18 +24,18 @@ fn main() -> Result<(), HandshakeError> {
         std::process::exit(1);
     }
 
-    let net_id = NetworkId::from_slice(&Vec::from_hex(&args[1]).unwrap()).unwrap();
-    let server_pk = ServerPublicKey::from_slice(&Vec::from_hex(&args[2]).unwrap()).unwrap();
+    let net_key = NetworkKey::from_slice(&Vec::from_hex(&args[1]).unwrap()).unwrap();
+    let server_pk = PublicKey::from_slice(&Vec::from_hex(&args[2]).unwrap()).unwrap();
 
-    let (pk, sk) = client::generate_longterm_keypair();
+    let (pk, sk) = generate_longterm_keypair();
 
     let mut stream = AllowStdIo::new(ReadWrite::new(stdin(), stdout()));
-    let mut o = block_on(client(&mut stream, net_id, pk, sk, server_pk))?;
+    let mut o = block_on(client(&mut stream, net_key, pk, sk, server_pk))?;
 
-    let mut v = o.c2s_key.as_slice().to_vec();
-    v.extend_from_slice(o.c2s_noncegen.next().as_slice());
-    v.extend_from_slice(o.s2c_key.as_slice());
-    v.extend_from_slice(o.s2c_noncegen.next().as_slice());
+    let mut v = o.write_key[..].to_vec();
+    v.extend_from_slice(&o.write_noncegen.next()[..]);
+    v.extend_from_slice(&o.read_key[..]);
+    v.extend_from_slice(&o.read_noncegen.next()[..]);
     assert_eq!(v.len(), 112);
 
     stdout().write(&v).unwrap();

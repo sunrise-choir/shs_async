@@ -12,17 +12,24 @@ use futures::io::{
 };
 use core::mem::size_of;
 
-pub use shs_core::*;
+use ssb_crypto::{NetworkKey, NonceGen, PublicKey, SecretKey};
+use shs_core::{*, messages::*};
+
+pub use shs_core::HandshakeError;
 
 pub async fn client<S: AsyncRead + AsyncWrite>(mut stream: S,
-                                               net_id: NetworkId,
-                                               pk: ClientPublicKey,
-                                               sk: ClientSecretKey,
-                                               server_pk: ServerPublicKey)
+                                               net_key: NetworkKey,
+                                               pk: PublicKey,
+                                               sk: SecretKey,
+                                               server_pk: PublicKey)
                                                -> Result<HandshakeOutcome, HandshakeError> {
 
+    let pk = ClientPublicKey(pk);
+    let sk = ClientSecretKey(sk);
+    let server_pk = ServerPublicKey(server_pk);
+
     let (eph_pk, eph_sk) = client::generate_eph_keypair();
-    let hello = ClientHello::new(&eph_pk, &net_id);
+    let hello = ClientHello::new(&eph_pk, &net_key);
     await!(stream.write_all(&hello.as_slice()))?;
     await!(stream.flush())?;
 
@@ -31,7 +38,7 @@ pub async fn client<S: AsyncRead + AsyncWrite>(mut stream: S,
         await!(stream.read_exact(&mut buf))?;
 
         let server_hello = ServerHello::from_slice(&buf)?;
-        server_hello.verify(&net_id)?
+        server_hello.verify(&net_key)?
     };
 
     // Derive shared secrets
@@ -40,7 +47,7 @@ pub async fn client<S: AsyncRead + AsyncWrite>(mut stream: S,
     let shared_c = SharedC::client_side(&sk, &server_eph_pk)?;
 
     // Send client auth
-    let client_auth = ClientAuth::new(&sk, &pk, &server_pk, &net_id, &shared_a, &shared_b);
+    let client_auth = ClientAuth::new(&sk, &pk, &server_pk, &net_key, &shared_a, &shared_b);
     await!(stream.write_all(client_auth.as_slice()))?;
     await!(stream.flush())?;
 
@@ -49,22 +56,26 @@ pub async fn client<S: AsyncRead + AsyncWrite>(mut stream: S,
 
     let server_acc = ServerAccept::from_buffer(buf.to_vec())?;
     server_acc.open_and_verify(&sk, &pk, &server_pk,
-                               &net_id, &shared_a,
+                               &net_key, &shared_a,
                                &shared_b, &shared_c)?;
 
     Ok(HandshakeOutcome {
-        c2s_key: ClientToServerKey::new(&server_pk, &net_id, &shared_a, &shared_b, &shared_c),
-        s2c_key: ServerToClientKey::new(&pk, &net_id, &shared_a, &shared_b, &shared_c),
-        c2s_noncegen: ClientToServerNonceGen::new(&server_eph_pk, &net_id),
-        s2c_noncegen: ServerToClientNonceGen::new(&eph_pk, &net_id),
+        read_key: server_to_client_key(&pk, &net_key, &shared_a, &shared_b, &shared_c),
+        read_noncegen: NonceGen::new(&eph_pk.0, &net_key),
+
+        write_key: client_to_server_key(&server_pk, &net_key, &shared_a, &shared_b, &shared_c),
+        write_noncegen: NonceGen::new(&server_eph_pk.0, &net_key),
     })
 }
 
 pub async fn server<S: AsyncRead + AsyncWrite>(mut stream: S,
-                                               net_id: NetworkId,
-                                               pk: ServerPublicKey,
-                                               sk: ServerSecretKey)
+                                               net_key: NetworkKey,
+                                               pk: PublicKey,
+                                               sk: SecretKey)
                                                -> Result<HandshakeOutcome, HandshakeError> {
+
+    let pk = ServerPublicKey(pk);
+    let sk = ServerSecretKey(sk);
 
     let (eph_pk, eph_sk) = server::generate_eph_keypair();
 
@@ -73,11 +84,11 @@ pub async fn server<S: AsyncRead + AsyncWrite>(mut stream: S,
         let mut buf = [0u8; 64];
         await!(stream.read_exact(&mut buf))?;
         let client_hello = ClientHello::from_slice(&buf)?;
-        client_hello.verify(&net_id)?
+        client_hello.verify(&net_key)?
     };
 
     // Send server hello
-    let hello = ServerHello::new(&eph_pk, &net_id);
+    let hello = ServerHello::new(&eph_pk, &net_key);
     await!(stream.write_all(hello.as_slice()))?;
     await!(stream.flush())?;
 
@@ -91,22 +102,23 @@ pub async fn server<S: AsyncRead + AsyncWrite>(mut stream: S,
         await!(stream.read_exact(&mut buf))?;
 
         let client_auth = ClientAuth::from_buffer(buf.to_vec())?;
-        client_auth.open_and_verify(&pk, &net_id, &shared_a, &shared_b)?
+        client_auth.open_and_verify(&pk, &net_key, &shared_a, &shared_b)?
     };
 
     // Derive shared secret
     let shared_c = SharedC::server_side(&eph_sk, &client_pk)?;
 
     // Send server accept
-    let server_acc = ServerAccept::new(&sk, &client_pk, &net_id, &client_sig,
+    let server_acc = ServerAccept::new(&sk, &client_pk, &net_key, &client_sig,
                                        &shared_a, &shared_b, &shared_c);
     await!(stream.write_all(server_acc.as_slice()))?;
     await!(stream.flush())?;
 
     Ok(HandshakeOutcome {
-        c2s_key: ClientToServerKey::new(&pk, &net_id, &shared_a, &shared_b, &shared_c),
-        s2c_key: ServerToClientKey::new(&client_pk, &net_id, &shared_a, &shared_b, &shared_c),
-        c2s_noncegen: ClientToServerNonceGen::new(&eph_pk, &net_id),
-        s2c_noncegen: ServerToClientNonceGen::new(&client_eph_pk, &net_id),
+        read_key: client_to_server_key(&pk, &net_key, &shared_a, &shared_b, &shared_c),
+        read_noncegen: NonceGen::new(&eph_pk.0, &net_key),
+
+        write_key: server_to_client_key(&client_pk, &net_key, &shared_a, &shared_b, &shared_c),
+        write_noncegen: NonceGen::new(&client_eph_pk.0, &net_key),
     })
 }
