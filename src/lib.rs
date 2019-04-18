@@ -17,25 +17,29 @@ use shs_core::{*, messages::*};
 
 pub use shs_core::HandshakeError;
 
-pub async fn client<S: AsyncRead + AsyncWrite>(mut stream: S,
-                                               net_key: NetworkKey,
-                                               pk: PublicKey,
-                                               sk: SecretKey,
-                                               server_pk: PublicKey)
-                                               -> Result<HandshakeOutcome, HandshakeError> {
-    let r = await!(attempt_client_side(&mut stream, net_key, pk, sk, server_pk));
+pub async fn client<S>(mut stream: S,
+                       net_key: NetworkKey,
+                       pk: PublicKey,
+                       sk: SecretKey,
+                       server_pk: PublicKey)
+                       -> Result<HandshakeOutcome, HandshakeError>
+where S: AsyncRead + AsyncWrite + Unpin
+{
+    let r = await!(try_client_side(&mut stream, net_key, pk, sk, server_pk));
     if r.is_err() {
         await!(stream.close()).unwrap_or(());
     }
     r
 }
 
-async fn attempt_client_side<S: AsyncRead + AsyncWrite>(mut stream: S,
-                                                        net_key: NetworkKey,
-                                                        pk: PublicKey,
-                                                        sk: SecretKey,
-                                                        server_pk: PublicKey)
-                                                        -> Result<HandshakeOutcome, HandshakeError> {
+async fn try_client_side<S>(mut stream: S,
+                            net_key: NetworkKey,
+                            pk: PublicKey,
+                            sk: SecretKey,
+                            server_pk: PublicKey)
+                            -> Result<HandshakeOutcome, HandshakeError>
+where S: AsyncRead + AsyncWrite + Unpin
+{
 
     let pk = ClientPublicKey(pk);
     let sk = ClientSecretKey(sk);
@@ -81,23 +85,27 @@ async fn attempt_client_side<S: AsyncRead + AsyncWrite>(mut stream: S,
     })
 }
 
-pub async fn server<S: AsyncRead + AsyncWrite>(mut stream: S,
-                                               net_key: NetworkKey,
-                                               pk: PublicKey,
-                                               sk: SecretKey)
-                                               -> Result<HandshakeOutcome, HandshakeError> {
-    let r = await!(attempt_server_side(&mut stream, net_key, pk, sk));
+pub async fn server<S>(mut stream: S,
+                       net_key: NetworkKey,
+                       pk: PublicKey,
+                       sk: SecretKey)
+                       -> Result<HandshakeOutcome, HandshakeError>
+where S: AsyncRead + AsyncWrite + Unpin
+{
+    let r = await!(try_server_side(&mut stream, net_key, pk, sk));
     if r.is_err() {
         await!(stream.close()).unwrap_or(());
     }
     r
 }
 
-async fn attempt_server_side<S: AsyncRead + AsyncWrite>(mut stream: S,
-                                                        net_key: NetworkKey,
-                                                        pk: PublicKey,
-                                                        sk: SecretKey)
-                                                        -> Result<HandshakeOutcome, HandshakeError> {
+async fn try_server_side<S>(mut stream: S,
+                            net_key: NetworkKey,
+                            pk: PublicKey,
+                            sk: SecretKey)
+                            -> Result<HandshakeOutcome, HandshakeError>
+where S: AsyncRead + AsyncWrite + Unpin
+{
 
     let pk = ServerPublicKey(pk);
     let sk = ServerSecretKey(sk);
@@ -151,32 +159,45 @@ async fn attempt_server_side<S: AsyncRead + AsyncWrite>(mut stream: S,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::task::Waker;
+    use core::task::Context;
+    use core::pin::Pin;
     use std::io;
     use futures::{join, Poll};
     use futures::executor::block_on;
 
     extern crate async_ringbuffer;
+    extern crate pin_utils;
+    use pin_utils::unsafe_pinned;
     use ssb_crypto::{generate_longterm_keypair, NetworkKey, PublicKey};
 
     struct Duplex<R, W> {
         r: R,
         w: W,
     }
-    impl<R: AsyncRead, W> AsyncRead for Duplex<R, W> {
-        fn poll_read(&mut self, wk: &Waker, buf: &mut [u8]) -> Poll<Result<usize, io::Error>> {
-            self.r.poll_read(wk, buf)
+    impl<R, W> Duplex<R, W> {
+        unsafe_pinned!(r: R);
+        unsafe_pinned!(w: W);
+    }
+    impl<R, W> AsyncRead for Duplex<R, W>
+    where
+        R: AsyncRead + Unpin,
+    {
+        fn poll_read(self: Pin<&mut Self>, cx: &mut Context, buf: &mut [u8]) -> Poll<Result<usize, io::Error>> {
+            self.r().poll_read(cx, buf)
         }
     }
-    impl<R, W: AsyncWrite> AsyncWrite for Duplex<R, W> {
-        fn poll_write(&mut self, wk: &Waker, buf: &[u8]) -> Poll<Result<usize, io::Error>> {
-            self.w.poll_write(wk, buf)
+    impl<R, W> AsyncWrite for Duplex<R, W>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<Result<usize, io::Error>> {
+            self.w().poll_write(cx, buf)
         }
-        fn poll_flush(&mut self, wk: &Waker) -> Poll<Result<(), io::Error>> {
-            self.w.poll_flush(wk)
+        fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+            self.w().poll_flush(cx)
         }
-        fn poll_close(&mut self, wk: &Waker) -> Poll<Result<(), io::Error>> {
-            self.w.poll_close(wk)
+        fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+            self.w().poll_close(cx)
         }
     }
 
