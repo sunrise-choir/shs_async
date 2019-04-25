@@ -21,6 +21,5 @@ pin-utils = "0.1.0-alpha.4"
 readwrite = "0.1"
 async-ringbuffer = "0.5"
 
-
 [patch.crates-io]
-async-ringbuffer = { git = "https://github.com/sunrise-choir/async-ringbuffer" }
+async-ringbuffer = { git = "https://github.com/sunrise-choir/async-ringbuffer", rev = "0c599a5" }
