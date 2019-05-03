@@ -1,5 +1,4 @@
-
-#![feature(async_await, await_macro, futures_api)]
+#![feature(async_await, await_macro)]
 
 extern crate futures;
 extern crate shs_core;
@@ -161,7 +160,7 @@ mod tests {
     use super::*;
     use core::task::Context;
     use core::pin::Pin;
-    use std::io;
+    use std::io::{self, ErrorKind};
     use futures::{join, Poll};
     use futures::executor::block_on;
 
@@ -201,13 +200,18 @@ mod tests {
         }
     }
 
-    #[test]
-    fn basic() {
+    type DuplexRingbufStream = Duplex<async_ringbuffer::Reader, async_ringbuffer::Writer>;
+
+    fn make_streams() -> (DuplexRingbufStream, DuplexRingbufStream) {
         let (c2s_w, c2s_r) = async_ringbuffer::ring_buffer(1024);
         let (s2c_w, s2c_r) = async_ringbuffer::ring_buffer(1024);
-        let mut c_stream = Duplex { r: s2c_r, w: c2s_w };
-        let mut s_stream = Duplex { r: c2s_r, w: s2c_w };
 
+        (Duplex { r: s2c_r, w: c2s_w }, Duplex { r: c2s_r, w: s2c_w })
+    }
+
+    #[test]
+    fn basic() {
+        let (mut c_stream, mut s_stream) = make_streams();
         let (s_pk, s_sk) = generate_longterm_keypair();
         let (c_pk, c_sk) = generate_longterm_keypair();
 
@@ -232,6 +236,33 @@ mod tests {
                    s_out.write_noncegen.next());
     }
 
+    fn is_eof_err<T>(r: &Result<T, HandshakeError>) -> bool {
+        match r {
+            Err(HandshakeError::Io(e)) => e.kind() == ErrorKind::UnexpectedEof,
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn server_rejects_wrong_netkey() {
+        let (mut c_stream, mut s_stream) = make_streams();
+        let (s_pk, s_sk) = generate_longterm_keypair();
+        let (c_pk, c_sk) = generate_longterm_keypair();
+
+        let client_side = client(&mut c_stream, NetworkKey::random(), c_pk, c_sk, s_pk.clone());
+        let server_side = server(&mut s_stream, NetworkKey::random(), s_pk, s_sk);
+
+        let (c_out, s_out) = block_on(async {
+            join!(client_side, server_side)
+        });
+
+        assert!(is_eof_err(&c_out));
+        match s_out {
+            Err(HandshakeError::ClientHelloVerifyFailed) => {},
+            _ => panic!(),
+        };
+    }
+
     #[test]
     fn reject_wrong_server_pk() {
         test_handshake_with_bad_server_pk(
@@ -244,11 +275,7 @@ mod tests {
     }
 
     fn test_handshake_with_bad_server_pk(bad_pk: PublicKey) {
-        let (c2s_w, c2s_r) = async_ringbuffer::ring_buffer(1024);
-        let (s2c_w, s2c_r) = async_ringbuffer::ring_buffer(1024);
-        let mut c_stream = Duplex { r: s2c_r, w: c2s_w };
-        let mut s_stream = Duplex { r: c2s_r, w: s2c_w };
-
+        let (mut c_stream, mut s_stream) = make_streams();
         let (s_pk, s_sk) = generate_longterm_keypair();
         let (c_pk, c_sk) = generate_longterm_keypair();
 
@@ -263,14 +290,6 @@ mod tests {
 
         assert!(c_out.is_err());
         assert!(s_out.is_err());
-
-        // let mut c_out = c_out.unwrap();
-        // let mut s_out = s_out.unwrap();
-
-
-
-
     }
-
 
 }

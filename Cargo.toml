@@ -13,7 +13,7 @@ keywords = ["secret-handshake", "handshake", "ssb", "scuttlebutt", "async"]
 [dependencies]
 futures-preview = "0.3.0-alpha.14"
 shs_core = "0.3.0"
-ssb-crypto = "0.1.0"
+ssb-crypto = "0.1.2"
 
 [dev-dependencies]
 hex = "0.3"
